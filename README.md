@@ -63,7 +63,7 @@ Chaque fonction du script représente un module indépendant :
 ## Installation
 
 ```bash
-git clone https://github.com/USERNAME/linux-security-hardening.git
+git clone https://github.com/Gabriel-P-IT/Hardening_Script_Debian.git
 cd linux-security-hardening
 chmod +x linux-security-hardening.sh
 sudo ./linux-security-hardening.sh --email admin@domaine.com
