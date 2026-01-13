@@ -2,7 +2,7 @@
 
 #############################################
 # Script Ultra-Complet de Sécurisation Linux
-# Version: 2.0
+# Version: 3.0
 # Date: Janvier 2026
 # Description: Automatise la sécurisation complète d'une VM Debian
 #############################################
