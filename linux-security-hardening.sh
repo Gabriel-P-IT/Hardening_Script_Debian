@@ -50,7 +50,7 @@ setup_directories() {
     info "Création backup directory avec permissions restrictives..."
     mkdir -p "$SCRIPT_DIR" "$BACKUP_DIR"
     chmod 700 "$BACKUP_DIR"
-    chmod 750 "$SCRIPT_DIR"
+    chmod 700 "$SCRIPT_DIR"
 }
 
 create_pre_hardening_snapshot() {
