@@ -2,9 +2,9 @@
 
 #############################################
 # Script Ultra-Complet de Sécurisation Linux
-# Version: 3.0
+# Version: 4.0
 # Date: Janvier 2026
-# Description: Automatise la sécurisation complète d'une VM Debian
+# Description: Automatise la sécurisation complète d'une VM Debian/Ubuntu
 #############################################
 
 set -euo pipefail
@@ -18,7 +18,6 @@ NC='\033[0m'
 SCRIPT_DIR="/var/log/security-hardening"
 BACKUP_DIR="/var/backups/security-$(date +%Y%m%d-%H%M%S)"
 LOG_FILE="${SCRIPT_DIR}/security-hardening-$(date +%Y%m%d).log"
-EMAIL_ADMIN="admin@example.com"
 
 log() {
     echo -e "$(date +'%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
@@ -54,20 +53,48 @@ setup_directories() {
     chmod 750 "$SCRIPT_DIR"
 }
 
+create_pre_hardening_snapshot() {
+    info "=== CRÉATION SNAPSHOT PRÉ-SÉCURISATION ==="
+
+    if ! command -v timeshift >/dev/null 2>&1; then
+        warning "Timeshift non installé, aucun snapshot créé"
+        return 1
+    fi
+
+    # Éviter les conteneurs
+    if [[ -f /.dockerenv ]] || grep -qi docker /proc/1/cgroup 2>/dev/null; then
+        warning "Environnement conteneur détecté, snapshot ignoré"
+        return 1
+    fi
+
+    local snap_name="pre-hardening-$(date +%Y%m%d-%H%M%S)"
+    info "Création du snapshot système: $snap_name"
+
+    if timeshift --create --comments "Snapshot avant sécurisation Linux" --snapshot-tag "$snap_name"; then
+        success "Snapshot créé: $snap_name"
+        echo "Snapshot: $snap_name" > "$BACKUP_DIR/snapshot_info.txt"
+        chmod 600 "$BACKUP_DIR/snapshot_info.txt"
+    else
+        warning "Échec de création du snapshot"
+    fi
+}
+
 validate_password() {
-    local password="$1"
     
-    # Vérifier longueur minimale
-    if [[ ${#password} -lt 12 ]]; then
-        return 1
+    local uppercase=0
+    local lowercase=0
+    local digit=0
+    local special=0
+    
+    [[ "$password" =~ [A-Z] ]] && uppercase=1
+    [[ "$password" =~ [a-z] ]] && lowercase=1
+    [[ "$password" =~ [0-9] ]] && digit=1
+    [[ "$password" =~ [-_.@!\#%&*+=,;:?] ]] && special=1
+    
+    local entropy=$((uppercase + lowercase + digit + special))
+    if [[ $entropy -lt 3 ]]; then  # Rejette si < 3 catégories
+        return 1 
     fi
-    
-    # Vérifier absence de caractères shell dangereux
-    if [[ "$password" =~ [\$\`\"\(\)\{\}\;] ]]; then
-        return 1
-    fi
-    
-    return 0
 }
 
 read_grub_password() {
@@ -270,8 +297,7 @@ port_monitoring() {
     trap "rm -f '$current_ports'" RETURN
     
     # Récupérer les ports écoutants
-    netstat -tuln 2>/dev/null | grep LISTEN >> "$current_ports" || true
-    ss -tuln 2>/dev/null | grep LISTEN >> "$current_ports" || true
+    ss -tuln | grep LISTEN >> "$current_ports"
     
     # Créer baseline si elle n'existe pas
     if [[ ! -f "$port_baseline" ]]; then
@@ -300,22 +326,20 @@ special_bits_check() {
     local suid_baseline="/etc/security/suid_baseline.txt"
     local suid_current
     
-    # Fichier temporaire sécurisé
     suid_current=$(create_secure_temp "suid_XXXXXX") || \
         error "Impossible de créer fichier temporaire"
     
     trap "rm -f '$suid_current'" RETURN
     
-    # Recherche fichiers SUID
     info "Recherche des fichiers SUID..."
     find / \
       \( -path /proc -o -path /sys -o -path /run -o -path /snap -o -path /media -o -path /mnt \) -prune \
       -o -type f -perm -4000 -exec ls -l {} \; 2>/dev/null > "$suid_current"
     
-    # Créer baseline ou comparer
     if [[ ! -f "$suid_baseline" ]]; then
         cp "$suid_current" "$suid_baseline"
         chmod 600 "$suid_baseline"
+        chattr +i "$suid_baseline" 2>/dev/null || warning "Impossible de rendre baseline SUID immutable"
     else
         if ! diff -q "$suid_baseline" "$suid_current" >/dev/null 2>&1; then
             warning "ALERTE: Nouveaux fichiers SUID détectés!"
@@ -323,18 +347,36 @@ special_bits_check() {
         fi
     fi
     
-    # Supprimer SUID dangereux
-    warning "Suppression des SUID dangereux..."
-    local dangerous_suid=(
-        "/usr/bin/at"
+    info "=== AUDIT DES FICHIERS SUID DÉTECTÉS ==="
+    info "Les fichiers SUID trouvés sont listés ci-dessous."
+    info "ATTENTION: La suppression du bit SUID peut casser des services!"
+    info "Recommandation: Utiliser capabilities au lieu de SUID quand possible."
+    info ""
+    
+    local suid_to_audit=(
+        "/usr/bin/sudo"           
+        "/usr/bin/passwd"
         "/usr/bin/chage"
         "/usr/bin/chfn"
         "/usr/bin/chsh"
-        "/usr/bin/expiry"
         "/usr/bin/gpasswd"
-        "/usr/bin/wall"
-        "/usr/bin/write"
+        "/usr/bin/newgrp"
+        "/sbin/unix_chkpwd"
     )
+    
+    info "Fichiers SUID critiques à AUDITER (ne pas supprimer):"
+    for binary in "${suid_to_audit[@]}"; do
+        if [[ -f "$binary" ]] && [[ -u "$binary" ]]; then
+            ls -l "$binary" | tee -a "$LOG_FILE"
+        fi
+    done
+    
+    info ""
+    info "Pour convertir SUID en capabilities (exemple):"
+    info "  setcap cap_net_raw=ep /usr/bin/ping"
+    info "  setcap cap_net_raw=ep /usr/bin/traceroute"
+    info "  chmod u-s /usr/bin/ping  # SUPPRIMER SUID APRÈS capabilities"
+}
     
     for binary in "${dangerous_suid[@]}"; do
         if [[ -f "$binary" ]] && [[ -u "$binary" ]]; then
@@ -347,6 +389,8 @@ special_bits_check() {
 main() {
     check_root
     setup_directories
+
+    create_pre_hardening_snapshot
     
     info "=== DÉBUT SÉCURISATION GRUB ==="
     grub_hardening
