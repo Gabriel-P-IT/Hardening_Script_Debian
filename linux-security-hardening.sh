@@ -376,15 +376,36 @@ special_bits_check() {
     info "  setcap cap_net_raw=ep /usr/bin/ping"
     info "  setcap cap_net_raw=ep /usr/bin/traceroute"
     info "  chmod u-s /usr/bin/ping  # SUPPRIMER SUID APRÈS capabilities"
-}
     
+    local dangerous_suid=(
+        "/usr/bin/at"
+        "/usr/bin/write"          
+        "/usr/bin/wall"
+        "/usr/lib/pt_chown"
+    )
+    
+    info "=== SUPPRESSION SUID DANGEREUX ==="
+    info "(Pause de 5s pour vérification manuelle)"
+    sleep 5
+    
+    local suppressed=0
     for binary in "${dangerous_suid[@]}"; do
         if [[ -f "$binary" ]] && [[ -u "$binary" ]]; then
             chmod u-s "$binary"
             info "SUID supprimé de $binary"
+            ((suppressed++))
+        else
+            info "$binary non trouvé ou sans SUID"
         fi
     done
+    
+    if [[ $suppressed -gt 0 ]]; then
+        success "Supprimé $suppressed bits SUID dangereux"
+    else
+        info "Aucun SUID dangereux trouvé"
+    fi
 }
+
 
 main() {
     check_root
