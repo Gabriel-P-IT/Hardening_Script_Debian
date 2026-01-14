@@ -10,7 +10,7 @@ Ce script se concentre sur **trois fonctionnalités principales** : sécurisatio
 
 ## ⚠️ État du Projet
 
-**Stade de développement : Prototype fonctionnel (non production-ready)**
+**Stade de développement : Prototype non fonctionnel pour le moment (non production-ready)**
 
 Ce script contient des **défauts de sécurité** qui le rendent dangereux en environnement de production.
 
